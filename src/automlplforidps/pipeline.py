@@ -2,31 +2,27 @@ import pandas as pd
 import numpy as np
 import warnings
 import time
+import joblib
 from collections import OrderedDict
 
-# Core scikit-learn modules
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import accuracy_score, f1_score, log_loss, confusion_matrix
 from sklearn.ensemble import RandomForestClassifier
 
-# Imbalanced-learn for data balancing
 from imblearn.over_sampling import BorderlineSMOTE
 from imblearn.under_sampling import TomekLinks
 
-# Advanced models
 import xgboost as xgb
 import catboost as cb
 
-# Feature Selection (PSO) and Hyperparameter Optimization (scikit-optimize)
 from zoofs import ParticleSwarmOptimization
 from skopt import BayesSearchCV
 from skopt.space import Real, Categorical, Integer
 
 warnings.filterwarnings('ignore')
 
-# --- Default Configuration ---
 DEFAULT_CONFIG = {
     "random_state": 42,
     "train_size": 0.8,
@@ -37,27 +33,25 @@ DEFAULT_CONFIG = {
 }
 
 def load_and_preprocess_data(file_path, target_column):
-    """Loads and applies robust preprocessing to a dataset."""
     print("1. Loading and preprocessing data...")
     try:
         df = pd.read_csv(file_path)
     except FileNotFoundError:
         print(f"Error: The file '{file_path}' was not found.")
-        return None, None
+        return None, None, None
 
     df.columns = [col.lower() for col in df.columns]
     target_column = target_column.lower()
     
     if target_column not in df.columns:
         print(f"Error: Target column '{target_column}' not found in the dataset.")
-        return None, None
+        return None, None, None
         
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
     X = df.drop(columns=target_column)
     y = df[target_column]
 
-    # Preprocess features (X)
     for col in X.select_dtypes(include='bool').columns:
         X[col] = X[col].astype(int)
 
@@ -71,7 +65,6 @@ def load_and_preprocess_data(file_path, target_column):
     for col in categorical_cols:
         X[col] = le_features.fit_transform(X[col].astype(str))
     
-    # Preprocess target (y)
     le_target = LabelEncoder()
     if y.dtype == 'object':
         y = pd.Series(le_target.fit_transform(y), name=target_column)
@@ -79,7 +72,6 @@ def load_and_preprocess_data(file_path, target_column):
     return X, y, le_target
 
 def balance_data(X, y, config):
-    """Balances the dataset using BorderlineSMOTE and TomekLinks."""
     print("2. Balancing data...")
     try:
         smote = BorderlineSMOTE(kind='borderline-1', random_state=config["random_state"])
@@ -92,17 +84,16 @@ def balance_data(X, y, config):
         return X, y
 
 def normalize_features(X):
-    """Applies StandardScaler to all features."""
     print("3. Normalizing features...")
     if X.empty:
-        return X
+        return X, None
     scaler = StandardScaler()
-    return pd.DataFrame(scaler.fit_transform(X), columns=X.columns)
+    X_scaled = pd.DataFrame(scaler.fit_transform(X), columns=X.columns)
+    return X_scaled, scaler
 
 def engineer_features_pso(X, y, config):
-    """Selects features using Particle Swarm Optimization."""
     print("4. Engineering features with PSO...")
-    if X.shape[1] < 5: # Skip if too few features
+    if X.shape[1] < 5:
         print("Skipping PSO for dataset with less than 5 features.")
         return X
 
@@ -129,7 +120,6 @@ def engineer_features_pso(X, y, config):
     return X[pso_features]
 
 def get_models(num_classes, random_state):
-    """Returns a dictionary of models configured for the task."""
     return {
         "RandomForest": RandomForestClassifier(random_state=random_state),
         "XGBoost": xgb.XGBClassifier(objective='multi:softmax', num_class=num_classes, random_state=random_state, use_label_encoder=False, eval_metric='mlogloss'),
@@ -137,7 +127,6 @@ def get_models(num_classes, random_state):
     }
 
 def tune_and_evaluate_model(model_name, X_train, y_train, X_test, y_test, num_classes, label_encoder, config):
-    """Tunes a single model using BayesSearchCV and prints its detailed evaluation."""
     print(f"\n--- Optimizing and Evaluating: {model_name} ---")
     
     base_model = get_models(num_classes, config["random_state"])[model_name]
@@ -148,7 +137,7 @@ def tune_and_evaluate_model(model_name, X_train, y_train, X_test, y_test, num_cl
         "CatBoost": { 'iterations': Integer(200, 1000), 'depth': Integer(4, 10), 'learning_rate': Real(0.01, 0.3, 'log-uniform')}
     }
     
-    if model_name not in search_spaces: return None
+    if model_name not in search_spaces: return None, 0.0
 
     optimizer = BayesSearchCV(
         base_model, search_spaces[model_name], n_iter=config["bayes_iterations"],
@@ -162,12 +151,12 @@ def tune_and_evaluate_model(model_name, X_train, y_train, X_test, y_test, num_cl
     best_params = OrderedDict(sorted(optimizer.best_params_.items()))
     for k, v in best_params.items(): print(f"  {k}: {v}")
     
-    # Detailed Evaluation
     print(f"\n--- Final Evaluation for Tuned {model_name} ---")
     y_pred_test = best_model.predict(X_test)
     y_pred_train = best_model.predict(X_train)
     
-    print(f"Overall Accuracy (Test): {accuracy_score(y_test, y_pred_test) * 100:.2f}%")
+    test_accuracy = accuracy_score(y_test, y_pred_test)
+    print(f"Overall Accuracy (Test): {test_accuracy * 100:.2f}%")
     print(f"Overall Accuracy (Train): {accuracy_score(y_train, y_pred_train) * 100:.2f}%")
     
     print("\nIndividual Class Accuracy (Recall) on Test Set:")
@@ -176,15 +165,9 @@ def tune_and_evaluate_model(model_name, X_train, y_train, X_test, y_test, num_cl
         recall = cm_test[i, i] / (cm_test[i, :].sum() + 1e-9)
         print(f"  - Class '{class_name}': {recall * 100:.2f}%")
 
-    return best_model
+    return best_model, test_accuracy
 
 def run_classification_pipeline(file_path, target_column, config=DEFAULT_CONFIG):
-    """
-    Executes the entire classification pipeline from loading to tuning.
-    
-    Returns:
-        dict: A dictionary of trained and tuned model objects.
-    """
     X, y, label_encoder = load_and_preprocess_data(file_path, target_column)
     if X is None: return {}
         
@@ -192,7 +175,7 @@ def run_classification_pipeline(file_path, target_column, config=DEFAULT_CONFIG)
     print(f"Detected {num_classes} classes in the target variable.")
 
     X_bal, y_bal = balance_data(X, y, config)
-    X_norm = normalize_features(X_bal)
+    X_norm, scaler = normalize_features(X_bal)
     X_eng = engineer_features_pso(X_norm, y_bal, config)
     
     X_train, X_test, y_train, y_test = train_test_split(
@@ -202,9 +185,33 @@ def run_classification_pipeline(file_path, target_column, config=DEFAULT_CONFIG)
     print("\n5. Starting Hyperparameter Optimization and Evaluation...")
     models_to_tune = get_models(num_classes, config["random_state"])
     trained_models = {}
+    
+    best_model_so_far = None
+    best_accuracy = -1.0
+    best_model_name = ""
+
     for name in models_to_tune:
-        tuned_model = tune_and_evaluate_model(name, X_train, y_train, X_test, y_test, num_classes, label_encoder, config)
+        tuned_model, accuracy = tune_and_evaluate_model(name, X_train, y_train, X_test, y_test, num_classes, label_encoder, config)
         if tuned_model:
             trained_models[name] = tuned_model
-            
+            if accuracy > best_accuracy:
+                best_accuracy = accuracy
+                best_model_so_far = tuned_model
+                best_model_name = name
+    
+    if best_model_so_far:
+        print(f"\n--- Saving Best Model and Artifacts ---")
+        print(f"Best model found: {best_model_name} with {best_accuracy * 100:.2f}% accuracy.")
+        
+        artifacts = {
+            'model': best_model_so_far,
+            'scaler': scaler,
+            'label_encoder': label_encoder,
+            'selected_features': list(X_eng.columns)
+        }
+        
+        output_filename = 'classification_artifacts.joblib'
+        joblib.dump(artifacts, output_filename)
+        print(f"Artifacts (model, scaler, label encoder) saved to '{output_filename}'.")
+
     return trained_models
