@@ -3,6 +3,7 @@ name = "automlplforidps"
 version = "0.1.0"
 description = "A robust, automated pipeline for multiclass classification tasks."
 readme = "README.md"
+license = {file = "LICENSE"}
 authors = [
     { name = "RAGHAVVRAM JOHNSON", email = "raghavvram.johnson@gmail.com" }
 ]
