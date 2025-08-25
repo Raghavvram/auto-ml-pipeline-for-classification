@@ -20,7 +20,12 @@ The core philosophy is to provide a robust, automated, and transparent process t
 
 ## Installation
 
-To get started, clone this repository and install the required dependencies. It is highly recommended to use a virtual environment.
+To get started, install the package using pip
+```bash
+pip install automlplforidps
+```
+
+ Or clone this repository and install the required dependencies. It is highly recommended to use a virtual environment.
 
 ```bash
 # Clone the repository
