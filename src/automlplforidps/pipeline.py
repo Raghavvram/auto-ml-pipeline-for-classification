@@ -1,6 +1,8 @@
+import warnings
+warnings.filterwarnings('ignore')
+
 import pandas as pd
 import numpy as np
-import warnings
 import time
 import joblib
 from collections import OrderedDict
@@ -20,8 +22,6 @@ import catboost as cb
 from zoofs import ParticleSwarmOptimization
 from skopt import BayesSearchCV
 from skopt.space import Real, Categorical, Integer
-
-warnings.filterwarnings('ignore')
 
 DEFAULT_CONFIG = {
     "random_state": 42,
@@ -122,7 +122,7 @@ def engineer_features_pso(X, y, config):
 def get_models(num_classes, random_state):
     return {
         "RandomForest": RandomForestClassifier(random_state=random_state),
-        "XGBoost": xgb.XGBClassifier(objective='multi:softmax', num_class=num_classes, random_state=random_state, use_label_encoder=False, eval_metric='mlogloss'),
+        "XGBoost": xgb.XGBClassifier(objective='multi:softmax', num_class=num_classes, random_state=random_state, eval_metric='mlogloss'),
         "CatBoost": cb.CatBoostClassifier(loss_function='MultiClass', random_state=random_state, verbose=0),
     }
 
